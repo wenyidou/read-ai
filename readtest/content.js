@@ -175,7 +175,7 @@ function renderMessages() {
   });
   
   // 滚动到底部显示最新消息
-  scrollToBottom();
+  // scrollToBottom();
 }
 
 /**
@@ -249,6 +249,7 @@ async function askChatGPT() {
   if (sendButton) {
     sendButton.disabled = true;
     sendButton.textContent = '发送中...';
+    scrollToBottom()
   }
  
   // 添加用户消息到历史记录
