@@ -19,7 +19,7 @@ const BODY_ACTIVE_CLASS = "reader-mode-active";
 const DEFAULT_SETTINGS = {
   fontSize: 18,                    // 字体大小（像素）
   lineHeight: 1.8,                 // 行高（倍数）
-  fontFamily: ' "Songti SC",Georgia, "Times New Roman", serif',  // 字体族
+  fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;',  // 字体族
   backgroundColor: "#ffffff",       // 背景颜色
   textColor: "#1f2933",            // 文字颜色
   maxWidth: "1000px",              // 最大宽度
@@ -31,7 +31,7 @@ const DEFAULT_SETTINGS = {
 /** AI 聊天状态对象 */
 const chatState = {
   loading: false,                  // 是否正在发送请求
-  apiKey: '输入你的密钥',  // ModelScope API 密钥
+  apiKey: 'ms-d7f96938-101e-4e72-9b7f-bd84fa41dbec',  // ModelScope API 密钥
   messages: [                      // 聊天消息历史
     {
       "role": "system",
@@ -113,7 +113,7 @@ function createMetaSection(article) {
    * 滚动消息容器到底部
    * 确保最新消息可见
    */
-  function scrollToBottom() {
+function scrollToBottom() {
     const container = document.getElementById("messagesContainer");
     if (container) {
       container.scrollTop = container.scrollHeight;
@@ -181,12 +181,13 @@ function renderMessages() {
 /**
  * 显示消息提示（控制台输出）
  * 可以扩展为更友好的 UI 提示
- * @param {string} type - 消息类型（如 'error', 'warning'）
+ * @param {string} type - 消息类型（如 'error', 'warning', 'success'）
  * @param {string} message - 消息内容
  */
 function showMessage(type, message) {
   console.log(`[${type}] ${message}`);
-  // 可以在这里添加更友好的提示UI
+  // 可以在这里添加更友好的提示UI，比如 toast 通知
+  // TODO: 可以实现一个全局的 toast 提示组件
 }
 
 /**
@@ -206,17 +207,60 @@ async function extractArticleContent() {
 
 /**
  * 提取当前网页内容并添加到聊天上下文
- * 将提取的文章文本作为用户消息发送给 AI
+ * 将提取的文章文本、图片和视频信息作为用户消息发送给 AI
  */
 async function querycontent(){
-  const articleText = await openReader();
-  const cleanText = articleText.trim();
-  console.log(cleanText);
-  // 将网页内容添加到消息历史
-  chatState.messages.push({
-    "role": "user",
-    "content": `网页内容：${cleanText}`
-  });
+  // 如果阅读器已经存在，只提取内容，不重建界面
+  if (isReaderActive()) {
+    const article = ReaderAbility.extractFromDocument(document);
+    if (!article) {
+      throw new Error("未能提取正文内容");
+    }
+    let cleanText =article.textContent.trim();
+    let contentMessage = `分析网页内容：${cleanText}`;
+    
+    // 添加图片信息
+    if (article.images && article.images.length > 0) {
+      contentMessage += `\n\n包含 ${article.images.length} 张图片`;
+      article.images.slice(0, 5).forEach((img, index) => {
+        contentMessage += `\n图片${index + 1}: ${img.alt || img.title || '无标题'}`;
+      });
+      if (article.images.length > 5) {
+        contentMessage += `\n...还有 ${article.images.length - 5} 张图片`;
+      }
+    }
+    
+    // 添加视频信息
+    if (article.videos && article.videos.length > 0) {
+      contentMessage += `\n\n包含 ${article.videos.length} 个视频`;
+      article.videos.forEach((video, index) => {
+        const videoInfo = video.type === 'video' 
+          ? `视频${index + 1}: ${video.title || '无标题'}${video.duration ? ` (时长: ${Math.floor(video.duration / 60)}分${video.duration % 60}秒)` : ''}`
+          : `视频${index + 1}: ${video.type} 平台嵌入视频 - ${video.title || '无标题'}`;
+        contentMessage += `\n${videoInfo}`;
+      });
+    }
+    
+    // 将网页内容添加到消息历史
+    chatState.messages.push({
+      "role": "user",
+      "content": contentMessage
+    });
+    // 更新消息显示
+    renderMessages();
+  } else {
+    // 如果阅读器不存在，创建阅读器（这会自动提取内容）
+    const articleText = await openReader();
+    const cleanText = articleText.trim();
+    console.log(cleanText);
+    // 将网页内容添加到消息历史
+    chatState.messages.push({
+      "role": "user",
+      "content": `网页内容：${cleanText}`
+    });
+    // 更新消息显示
+    renderMessages();
+  }
 }
 
 /**
@@ -249,7 +293,7 @@ async function askChatGPT() {
   if (sendButton) {
     sendButton.disabled = true;
     sendButton.textContent = '发送中...';
-    scrollToBottom()
+    scrollToBottom();
   }
  
   // 添加用户消息到历史记录
@@ -353,6 +397,7 @@ async function askChatGPT() {
       sendButton.disabled = false;
       sendButton.textContent = '发送';
     }
+
     scrollToBottom();
   }
 }
@@ -381,6 +426,125 @@ function initializeChatInterface() {
   const userInput = document.getElementById('userInput');
   if (userInput) {
     userInput.focus();
+  }
+}
+
+// ==================== 笔记本功能 ====================
+
+/**
+ * 保存笔记到 Chrome 存储
+ * @param {string} content - 笔记内容
+ * @returns {Promise<void>}
+ */
+async function saveNotebook(content) {
+  return new Promise((resolve) => {
+    chrome.storage.local.set({ notebookContent: content }, () => {
+      resolve();
+    });
+  });
+}
+
+/**
+ * 从 Chrome 存储加载笔记
+ * @returns {Promise<string>} 返回笔记内容
+ */
+async function loadNotebook() {
+  return new Promise((resolve) => {
+    chrome.storage.local.get('notebookContent', (data) => {
+      resolve(data.notebookContent || '');
+    });
+  });
+}
+
+/**
+ * 导出笔记为文本文件
+ * @param {string} content - 笔记内容
+ */
+function exportNotebookAsText(content) {
+  if (!content || !content.trim()) {
+    showMessage('warning', '笔记内容为空，无法导出');
+    return;
+  }
+
+  // 创建 Blob 对象
+  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+  
+  // 创建下载链接
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  
+  // 生成文件名（包含时间戳）
+  const now = new Date();
+  const dateStr = now.toISOString().slice(0, 19).replace(/:/g, '-').replace('T', '_');
+  link.download = `笔记_${dateStr}.txt`;
+  
+  // 触发下载
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  
+  // 释放 URL 对象
+  setTimeout(() => URL.revokeObjectURL(url), 100);
+  
+  showMessage('success', '笔记已导出');
+}
+
+/**
+ * 初始化笔记本功能
+ * 加载已保存的笔记内容并绑定事件
+ */
+async function initializeNotebook() {
+  const notebookTextarea = document.getElementById('notebookTextarea');
+  const saveBtn = document.getElementById('saveNotebookBtn');
+  const exportBtn = document.getElementById('exportNotebookBtn');
+
+  if (!notebookTextarea) return;
+
+  // 加载已保存的笔记
+  const savedContent = await loadNotebook();
+  if (savedContent) {
+    notebookTextarea.value = savedContent;
+  }
+
+  // 绑定保存按钮事件
+  if (saveBtn) {
+    saveBtn.addEventListener('click', async () => {
+      const content = notebookTextarea.value;
+      await saveNotebook(content);
+      saveBtn.textContent = '已保存';
+      saveBtn.style.background = '#4caf50';
+      setTimeout(() => {
+        saveBtn.textContent = '保存笔记';
+        saveBtn.style.background = '';
+      }, 2000);
+      showMessage('success', '笔记已保存');
+    });
+  }
+
+  // 绑定导出按钮事件
+  if (exportBtn) {
+    exportBtn.addEventListener('click', () => {
+      const content = notebookTextarea.value;
+      exportNotebookAsText(content);
+    });
+  }
+
+  // 自动保存（可选：每次输入后延迟保存）
+  let saveTimeout = null;
+  if (notebookTextarea) {
+    notebookTextarea.addEventListener('input', () => {
+      // 清除之前的定时器
+      if (saveTimeout) {
+        clearTimeout(saveTimeout);
+      }
+      // 延迟 2 秒后自动保存
+      saveTimeout = setTimeout(async () => {
+        const content = notebookTextarea.value;
+        await saveNotebook(content);
+        console.log('笔记已自动保存');
+      }, 2000);
+    });
   }
 }
 
@@ -513,6 +677,88 @@ async function openReader() {
     }
   });
   
+  // 处理视频：添加样式类、创建容器结构
+  content.querySelectorAll("video").forEach((video) => {
+    video.classList.add("reader-video-media");
+    video.removeAttribute("width");
+    video.removeAttribute("height");
+    video.setAttribute("controls", "true");  // 确保有控制条
+    video.setAttribute("preload", "metadata");  // 预加载元数据
+
+    // 查找或创建 figure 元素包裹视频
+    let figure = video.closest("figure");
+    if (!figure) {
+      figure = document.createElement("figure");
+      figure.className = "reader-video";
+      video.parentNode.insertBefore(figure, video);
+      figure.appendChild(video);
+    } else {
+      figure.classList.add("reader-video");
+    }
+
+    // 如果有标题，创建视频说明
+    if (!figure.querySelector("figcaption")) {
+      const captionText = video.getAttribute("title");
+      if (captionText) {
+        const caption = document.createElement("figcaption");
+        caption.textContent = captionText;
+        figure.appendChild(caption);
+      }
+    }
+  });
+
+  // 处理 iframe 嵌入的视频（YouTube、Bilibili 等）
+  content.querySelectorAll("iframe").forEach((iframe) => {
+    const src = iframe.getAttribute("src") || "";
+    
+    // 判断是否是视频嵌入
+    const isVideoEmbed = src.includes("youtube.com") || 
+                        src.includes("youtu.be") || 
+                        src.includes("bilibili.com") || 
+                        src.includes("b23.tv") ||
+                        src.includes("youku.com") ||
+                        src.includes("v.qq.com") ||
+                        src.includes("iqiyi.com") ||
+                        src.includes("vimeo.com") ||
+                        src.includes("dailymotion.com");
+
+    if (isVideoEmbed) {
+      iframe.classList.add("reader-video-embed");
+      iframe.removeAttribute("width");
+      iframe.removeAttribute("height");
+      
+      // 创建响应式容器包裹 iframe
+      let wrapper = iframe.parentElement;
+      if (!wrapper || !wrapper.classList.contains("reader-video-wrapper")) {
+        wrapper = document.createElement("div");
+        wrapper.className = "reader-video-wrapper";
+        iframe.parentNode.insertBefore(wrapper, iframe);
+        wrapper.appendChild(iframe);
+      }
+
+      // 查找或创建 figure 元素
+      let figure = wrapper.closest("figure");
+      if (!figure) {
+        figure = document.createElement("figure");
+        figure.className = "reader-video";
+        wrapper.parentNode.insertBefore(figure, wrapper);
+        figure.appendChild(wrapper);
+      } else {
+        figure.classList.add("reader-video");
+      }
+
+      // 如果有标题，创建视频说明
+      if (!figure.querySelector("figcaption")) {
+        const captionText = iframe.getAttribute("title");
+        if (captionText) {
+          const caption = document.createElement("figcaption");
+          caption.textContent = captionText;
+          figure.appendChild(caption);
+        }
+      }
+    }
+  });
+  
   // 处理表格：添加样式类、移除固定尺寸、添加包装容器
   content.querySelectorAll("table").forEach((table) => {
     table.classList.add("reader-table");
@@ -566,9 +812,14 @@ async function openReader() {
     </div>
   </div>
   <div id="tab2" class="tab-panel">
-    <h2>笔记本</h2>
-    <p>这里是笔记本内容区域</p>
-    <textarea class="notebook-textarea" placeholder="在这里记录笔记..."></textarea>
+    <div class="notebook-header">
+      <h2>笔记本</h2>
+    </div>
+    <textarea class="notebook-textarea" id="notebookTextarea" placeholder="在这里记录笔记..."></textarea>
+    <div class="notebook-footer">
+      <button class="notebook-save-btn" id="saveNotebookBtn">保存笔记</button>
+      <button class="notebook-export-btn" id="exportNotebookBtn">导出为文本文件</button>
+    </div>
   </div>
 `;
 
@@ -616,8 +867,21 @@ async function openReader() {
     userInput.focus();
   }
 
+  // 设置 CSS 变量，用于在 CSS 中引用背景图片
+  // 使用 chrome.runtime.getURL() 获取扩展资源的正确路径
+  // const backgroundUrl = chrome.runtime.getURL('icons/background.jpg');
+  // overlay.style.setProperty('--background-image-url', `url("${backgroundUrl}")`);
+
   // 延迟初始化聊天界面（确保 DOM 已完全渲染）
   setTimeout(initializeChatInterface, 0);
+  
+  // 如果默认显示的是笔记本标签页，初始化笔记本功能
+  const defaultActiveTab = aiframe.querySelector('.tab-panel.active');
+  if (defaultActiveTab && defaultActiveTab.id === 'tab2') {
+    setTimeout(() => {
+      initializeNotebook();
+    }, 0);
+  }
 
   // 工具栏按钮点击事件处理
   toolbar.addEventListener("click", async (event) => {
@@ -645,6 +909,10 @@ async function openReader() {
       const notebookTab = aiframe.querySelector('#tab2');
       if (notebookTab) {
         notebookTab.classList.add('active');
+        // 初始化笔记本功能（如果还未初始化）
+        setTimeout(() => {
+          initializeNotebook();
+        }, 0);
       }
       console.log('切换到笔记本模式');
     } else if (action === "ai") {
